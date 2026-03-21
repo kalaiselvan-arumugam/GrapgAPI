@@ -1,0 +1,581 @@
+{
+  "info": {
+    "name": "Microsoft Graph API - AD Group User Fetcher",
+    "description": "Postman collection for Microsoft Graph API covering:\n1. Get Access Token (OAuth2 Client Credentials)\n2. Resolve Group Name → Object ID  (Group.Read.All)\n3. Get Group Members               (GroupMember.Read.All)\n4. Get User Details                (User.Read.All)\n\nSetup:\n  1. Click the collection name → Variables tab\n  2. Fill in TENANT_ID, CLIENT_ID, CLIENT_SECRET, GROUP_NAME\n  3. Run '1. Get Access Token' first — it auto-saves the token\n  4. Run the remaining requests in order",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+
+  "variable": [
+    {
+      "key": "TENANT_ID",
+      "value": "YOUR_TENANT_ID",
+      "description": "Azure AD Tenant ID (GUID or domain e.g. contoso.onmicrosoft.com)",
+      "type": "string"
+    },
+    {
+      "key": "CLIENT_ID",
+      "value": "YOUR_CLIENT_ID",
+      "description": "App Registration Client ID (GUID)",
+      "type": "string"
+    },
+    {
+      "key": "CLIENT_SECRET",
+      "value": "YOUR_CLIENT_SECRET",
+      "description": "App Registration Client Secret value (not the secret ID)",
+      "type": "string"
+    },
+    {
+      "key": "GROUP_NAME",
+      "value": "SM-APPLICATION-ADMIN",
+      "description": "Display name of the AD group to resolve",
+      "type": "string"
+    },
+    {
+      "key": "GROUP_OBJECT_ID",
+      "value": "",
+      "description": "Auto-populated by the 'Resolve Group Name' request test script",
+      "type": "string"
+    },
+    {
+      "key": "USER_OBJECT_ID",
+      "value": "",
+      "description": "Paste any user Object ID here to test 'Get User Details'",
+      "type": "string"
+    },
+    {
+      "key": "ACCESS_TOKEN",
+      "value": "",
+      "description": "Auto-populated by the 'Get Access Token' request test script",
+      "type": "string"
+    },
+    {
+      "key": "GRAPH_BASE_URL",
+      "value": "https://graph.microsoft.com/v1.0",
+      "description": "Microsoft Graph API base URL",
+      "type": "string"
+    },
+    {
+      "key": "TOKEN_URL",
+      "value": "https://login.microsoftonline.com/{{TENANT_ID}}/oauth2/v2.0/token",
+      "description": "Azure AD OAuth2 token endpoint",
+      "type": "string"
+    }
+  ],
+
+  "item": [
+
+    {
+      "name": "1. Get Access Token",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "client_credentials",
+              "description": "OAuth2 flow — no user sign-in required",
+              "type": "text"
+            },
+            {
+              "key": "client_id",
+              "value": "{{CLIENT_ID}}",
+              "description": "App Registration Client ID",
+              "type": "text"
+            },
+            {
+              "key": "client_secret",
+              "value": "{{CLIENT_SECRET}}",
+              "description": "App Registration Client Secret",
+              "type": "text"
+            },
+            {
+              "key": "scope",
+              "value": "https://graph.microsoft.com/.default",
+              "description": ".default means: grant all permissions already configured and admin-consented in Azure Portal",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{TOKEN_URL}}",
+          "host": ["{{TOKEN_URL}}"]
+        },
+        "description": "Acquires an OAuth2 Bearer token using the Client Credentials flow (application access — no user sign-in).\n\nRequired Azure AD App Registration:\n  - grant_type: client_credentials\n  - scope: https://graph.microsoft.com/.default\n\nThe test script automatically saves the token to the ACCESS_TOKEN collection variable so all subsequent requests use it."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// ── Status check ───────────────────────────────────────────",
+              "pm.test('Status 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// ── Parse and save the token ───────────────────────────────",
+              "pm.test('Response contains access_token', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json).to.have.property('access_token');",
+              "",
+              "    // Auto-save to collection variable — used by all other requests",
+              "    pm.collectionVariables.set('ACCESS_TOKEN', json.access_token);",
+              "    console.log('✅ Access token saved to ACCESS_TOKEN variable');",
+              "    console.log('   Token type :', json.token_type);",
+              "    console.log('   Expires in :', json.expires_in, 'seconds');",
+              "});",
+              "",
+              "// ── Detect Azure AD errors (HTTP 400 with error body) ──────",
+              "pm.test('No Azure AD error in response', function () {",
+              "    var json = pm.response.json();",
+              "    if (json.error) {",
+              "        console.error('❌ Azure AD Error:', json.error);",
+              "        console.error('   Description :', json.error_description);",
+              "    }",
+              "    pm.expect(json).to.not.have.property('error');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": [
+        {
+          "name": "Success",
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"token_type\": \"Bearer\",\n  \"expires_in\": 3599,\n  \"ext_expires_in\": 3599,\n  \"access_token\": \"eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1Ni...\"\n}"
+        },
+        {
+          "name": "Invalid Client Secret",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"error\": \"invalid_client\",\n  \"error_description\": \"AADSTS7000215: Invalid client secret provided...\"\n}"
+        },
+        {
+          "name": "Tenant Not Found",
+          "status": "Bad Request",
+          "code": 400,
+          "body": "{\n  \"error\": \"invalid_request\",\n  \"error_description\": \"AADSTS90002: Tenant not found...\"\n}"
+        }
+      ]
+    },
+
+    {
+      "name": "2. Resolve Group Name to Object ID  [Group.Read.All]",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ACCESS_TOKEN}}",
+            "description": "Auto-populated from step 1"
+          },
+          {
+            "key": "ConsistencyLevel",
+            "value": "eventual",
+            "description": "Required when using $filter with $count on directory objects"
+          }
+        ],
+        "url": {
+          "raw": "{{GRAPH_BASE_URL}}/groups?$filter=displayName eq '{{GROUP_NAME}}'&$select=id,displayName,description,groupTypes,membershipRule&$count=true",
+          "host": ["{{GRAPH_BASE_URL}}"],
+          "path": ["groups"],
+          "query": [
+            {
+              "key": "$filter",
+              "value": "displayName eq '{{GROUP_NAME}}'",
+              "description": "Exact match on display name — case-insensitive on most tenants"
+            },
+            {
+              "key": "$select",
+              "value": "id,displayName,description,groupTypes,membershipRule",
+              "description": "Only fetch the fields we need"
+            },
+            {
+              "key": "$count",
+              "value": "true",
+              "description": "Returns total number of matched groups — requires ConsistencyLevel: eventual"
+            }
+          ]
+        },
+        "description": "Resolves a group display name (e.g. SM-APPLICATION-ADMIN) to its Azure AD Object ID.\n\nPermission required: Group.Read.All (Application)\n\nThe test script:\n  - Reads the first match from the 'value' array\n  - Saves the Object ID to GROUP_OBJECT_ID collection variable\n  - Warns if multiple groups share the same display name\n\nChange the GROUP_NAME collection variable to switch groups."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// ── Status check ───────────────────────────────────────────",
+              "pm.test('Status 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "// ── Parse and save Group Object ID ─────────────────────────",
+              "pm.test('Group found and Object ID saved', function () {",
+              "    var json   = pm.response.json();",
+              "    var groups = json.value;",
+              "",
+              "    pm.expect(groups, 'value array missing').to.be.an('array');",
+              "    pm.expect(groups.length, 'No group found with that display name').to.be.greaterThan(0);",
+              "",
+              "    if (groups.length > 1) {",
+              "        console.warn('⚠️  Multiple groups matched display name. Using first result.');",
+              "        groups.forEach(function(g) {",
+              "            console.warn('   -', g.displayName, '|', g.id);",
+              "        });",
+              "    }",
+              "",
+              "    var group = groups[0];",
+              "    pm.collectionVariables.set('GROUP_OBJECT_ID', group.id);",
+              "",
+              "    console.log('✅ Group resolved:');",
+              "    console.log('   Display Name :', group.displayName);",
+              "    console.log('   Object ID    :', group.id);",
+              "    console.log('   Description  :', group.description || '(none)');",
+              "    console.log('   Group Types  :', JSON.stringify(group.groupTypes));",
+              "});",
+              "",
+              "// ── Detect Graph API errors ────────────────────────────────",
+              "pm.test('No Graph API error', function () {",
+              "    var json = pm.response.json();",
+              "    if (json.error) {",
+              "        console.error('❌ Graph Error:', json.error.code, '-', json.error.message);",
+              "    }",
+              "    pm.expect(json).to.not.have.property('error');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": [
+        {
+          "name": "Success",
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"@odata.context\": \"https://graph.microsoft.com/v1.0/$metadata#groups(id,displayName,description,groupTypes,membershipRule)\",\n  \"@odata.count\": 1,\n  \"value\": [\n    {\n      \"id\": \"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\",\n      \"displayName\": \"SM-APPLICATION-ADMIN\",\n      \"description\": \"Application administrators\",\n      \"groupTypes\": [],\n      \"membershipRule\": null\n    }\n  ]\n}"
+        },
+        {
+          "name": "Group Not Found",
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"@odata.count\": 0,\n  \"value\": []\n}"
+        },
+        {
+          "name": "Missing Permission",
+          "status": "Forbidden",
+          "code": 403,
+          "body": "{\n  \"error\": {\n    \"code\": \"Authorization_RequestDenied\",\n    \"message\": \"Insufficient privileges to complete the operation.\"\n  }\n}"
+        }
+      ]
+    },
+
+    {
+      "name": "3. Get Group Members (Page 1)  [GroupMember.Read.All]",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ACCESS_TOKEN}}"
+          },
+          {
+            "key": "ConsistencyLevel",
+            "value": "eventual",
+            "description": "Required when using $count on members"
+          }
+        ],
+        "url": {
+          "raw": "{{GRAPH_BASE_URL}}/groups/{{GROUP_OBJECT_ID}}/members/microsoft.graph.user?$select=id,displayName,userPrincipalName,mail,givenName,surname,jobTitle,department,officeLocation,companyName,mobilePhone,businessPhones,accountEnabled,createdDateTime&$top=10&$count=true",
+          "host": ["{{GRAPH_BASE_URL}}"],
+          "path": [
+            "groups",
+            "{{GROUP_OBJECT_ID}}",
+            "members",
+            "microsoft.graph.user"
+          ],
+          "query": [
+            {
+              "key": "$select",
+              "value": "id,displayName,userPrincipalName,mail,givenName,surname,jobTitle,department,officeLocation,companyName,mobilePhone,businessPhones,accountEnabled,createdDateTime",
+              "description": "All user fields fetched by the Java application"
+            },
+            {
+              "key": "$top",
+              "value": "10",
+              "description": "Page size — set to 10 for easy Postman testing (Java app uses 999)"
+            },
+            {
+              "key": "$count",
+              "value": "true",
+              "description": "Returns @odata.count with total member count"
+            }
+          ]
+        },
+        "description": "Retrieves the first page of users in a group.\n\nPermission required: GroupMember.Read.All (Application)\n\nKey points:\n  - /microsoft.graph.user suffix filters out nested groups and service principals — only user objects returned\n  - @odata.count in response = total members in group\n  - @odata.nextLink in response = URL for next page (copy it into request '3b' to paginate)\n  - $top is set to 10 here for Postman testing; Java app uses 999\n\nPre-requisite: Run request '2' first so GROUP_OBJECT_ID is populated."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Members returned', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.value).to.be.an('array');",
+              "",
+              "    console.log('✅ Members on this page :', json.value.length);",
+              "",
+              "    if (json['@odata.count'] !== undefined) {",
+              "        console.log('   Total members in group:', json['@odata.count']);",
+              "    }",
+              "",
+              "    if (json['@odata.nextLink']) {",
+              "        console.log('   Next page URL:', json['@odata.nextLink']);",
+              "        console.log('   ➡ Copy the nextLink URL into request 3b to fetch the next page');",
+              "    } else {",
+              "        console.log('   ✅ This is the last (or only) page — no nextLink present');",
+              "    }",
+              "",
+              "    // Auto-save first user's ID for easy testing of request 4",
+              "    if (json.value.length > 0) {",
+              "        var firstUser = json.value[0];",
+              "        pm.collectionVariables.set('USER_OBJECT_ID', firstUser.id);",
+              "        console.log('   First user saved to USER_OBJECT_ID:', firstUser.displayName, '|', firstUser.userPrincipalName);",
+              "    }",
+              "",
+              "    // Print a summary table of all users on this page",
+              "    console.log('');",
+              "    console.log('   # | Display Name              | UPN                        | Job Title');",
+              "    json.value.forEach(function(u, i) {",
+              "        console.log('  ', (i+1), '|', (u.displayName||'').padEnd(26),",
+              "            '|', (u.userPrincipalName||'').padEnd(27),",
+              "            '|', u.jobTitle||'');",
+              "    });",
+              "});",
+              "",
+              "pm.test('No Graph API error', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json).to.not.have.property('error');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": [
+        {
+          "name": "Success (with nextLink)",
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"@odata.context\": \"https://graph.microsoft.com/v1.0/$metadata#users\",\n  \"@odata.count\": 1250,\n  \"@odata.nextLink\": \"https://graph.microsoft.com/v1.0/groups/xxxx/members/microsoft.graph.user?$skiptoken=abc123\",\n  \"value\": [\n    {\n      \"id\": \"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\",\n      \"displayName\": \"John Doe\",\n      \"userPrincipalName\": \"john.doe@contoso.com\",\n      \"mail\": \"john.doe@contoso.com\",\n      \"givenName\": \"John\",\n      \"surname\": \"Doe\",\n      \"jobTitle\": \"Software Engineer\",\n      \"department\": \"Engineering\",\n      \"officeLocation\": \"Chennai HQ\",\n      \"companyName\": \"Contoso\",\n      \"mobilePhone\": \"+91-9876543210\",\n      \"businessPhones\": [\"+91-44-12345678\"],\n      \"accountEnabled\": true,\n      \"createdDateTime\": \"2022-03-15T09:30:00Z\"\n    }\n  ]\n}"
+        }
+      ]
+    },
+
+    {
+      "name": "3b. Get Group Members (Next Page — Pagination)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ACCESS_TOKEN}}"
+          },
+          {
+            "key": "ConsistencyLevel",
+            "value": "eventual"
+          }
+        ],
+        "url": {
+          "raw": "PASTE_@odata.nextLink_VALUE_HERE",
+          "host": ["PASTE_@odata.nextLink_VALUE_HERE"]
+        },
+        "description": "Use this request to manually paginate through group members.\n\nHow to use:\n  1. Run request '3' first\n  2. Copy the @odata.nextLink URL from the response body\n  3. Paste it into the URL field of THIS request\n  4. Keep repeating until @odata.nextLink is absent (last page reached)\n\nIn the Java application this is handled automatically in a while-loop."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Next page returned', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.value).to.be.an('array');",
+              "    console.log('Members on this page:', json.value.length);",
+              "",
+              "    if (json['@odata.nextLink']) {",
+              "        console.log('➡ More pages available. Next URL:', json['@odata.nextLink']);",
+              "    } else {",
+              "        console.log('✅ Last page reached — no nextLink present');",
+              "    }",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "4. Get User Details by Object ID  [User.Read.All]",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ACCESS_TOKEN}}"
+          }
+        ],
+        "url": {
+          "raw": "{{GRAPH_BASE_URL}}/users/{{USER_OBJECT_ID}}?$select=id,displayName,userPrincipalName,mail,givenName,surname,jobTitle,department,officeLocation,companyName,mobilePhone,businessPhones,accountEnabled,createdDateTime",
+          "host": ["{{GRAPH_BASE_URL}}"],
+          "path": ["users", "{{USER_OBJECT_ID}}"],
+          "query": [
+            {
+              "key": "$select",
+              "value": "id,displayName,userPrincipalName,mail,givenName,surname,jobTitle,department,officeLocation,companyName,mobilePhone,businessPhones,accountEnabled,createdDateTime",
+              "description": "Full set of fields matching the User model in the Java application"
+            }
+          ]
+        },
+        "description": "Fetches the full profile of a single user by their Object ID.\n\nPermission required: User.Read.All (Application)\n\nUSER_OBJECT_ID is auto-populated by request '3' (first user in the group).\nYou can also manually set it to any user's Object ID.\n\nAlternatively, you can look up by UPN:\n  GET /v1.0/users/john.doe@contoso.com"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('User details returned', function () {",
+              "    var u = pm.response.json();",
+              "    pm.expect(u).to.have.property('id');",
+              "    pm.expect(u).to.have.property('userPrincipalName');",
+              "",
+              "    console.log('✅ User details:');",
+              "    console.log('   Object ID          :', u.id);",
+              "    console.log('   Display Name       :', u.displayName);",
+              "    console.log('   UPN                :', u.userPrincipalName);",
+              "    console.log('   Mail               :', u.mail);",
+              "    console.log('   Given Name         :', u.givenName);",
+              "    console.log('   Surname            :', u.surname);",
+              "    console.log('   Job Title          :', u.jobTitle);",
+              "    console.log('   Department         :', u.department);",
+              "    console.log('   Office Location    :', u.officeLocation);",
+              "    console.log('   Company            :', u.companyName);",
+              "    console.log('   Mobile Phone       :', u.mobilePhone);",
+              "    console.log('   Business Phones    :', JSON.stringify(u.businessPhones));",
+              "    console.log('   Account Enabled    :', u.accountEnabled);",
+              "    console.log('   Created DateTime   :', u.createdDateTime);",
+              "});",
+              "",
+              "pm.test('No Graph API error', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json).to.not.have.property('error');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": [
+        {
+          "name": "Success",
+          "status": "OK",
+          "code": 200,
+          "body": "{\n  \"id\": \"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\",\n  \"displayName\": \"John Doe\",\n  \"userPrincipalName\": \"john.doe@contoso.com\",\n  \"mail\": \"john.doe@contoso.com\",\n  \"givenName\": \"John\",\n  \"surname\": \"Doe\",\n  \"jobTitle\": \"Software Engineer\",\n  \"department\": \"Engineering\",\n  \"officeLocation\": \"Chennai HQ\",\n  \"companyName\": \"Contoso\",\n  \"mobilePhone\": \"+91-9876543210\",\n  \"businessPhones\": [\"+91-44-12345678\"],\n  \"accountEnabled\": true,\n  \"createdDateTime\": \"2022-03-15T09:30:00Z\"\n}"
+        },
+        {
+          "name": "User Not Found",
+          "status": "Not Found",
+          "code": 404,
+          "body": "{\n  \"error\": {\n    \"code\": \"Request_ResourceNotFound\",\n    \"message\": \"Resource 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' does not exist.\"\n  }\n}"
+        }
+      ]
+    },
+
+    {
+      "name": "5. List All Groups (sanity check)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{ACCESS_TOKEN}}"
+          },
+          {
+            "key": "ConsistencyLevel",
+            "value": "eventual"
+          }
+        ],
+        "url": {
+          "raw": "{{GRAPH_BASE_URL}}/groups?$select=id,displayName,description&$top=20&$orderby=displayName&$count=true",
+          "host": ["{{GRAPH_BASE_URL}}"],
+          "path": ["groups"],
+          "query": [
+            {
+              "key": "$select",
+              "value": "id,displayName,description"
+            },
+            {
+              "key": "$top",
+              "value": "20",
+              "description": "Return first 20 groups"
+            },
+            {
+              "key": "$orderby",
+              "value": "displayName",
+              "description": "Sort alphabetically"
+            },
+            {
+              "key": "$count",
+              "value": "true"
+            }
+          ]
+        },
+        "description": "Lists the first 20 groups in your tenant sorted alphabetically.\n\nUseful for:\n  - Verifying Group.Read.All permission is working\n  - Finding the exact display name spelling for your groups\n  - Checking total group count via @odata.count\n\nPermission required: Group.Read.All (Application)"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('Groups listed', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.value).to.be.an('array');",
+              "    console.log('Total groups in tenant:', json['@odata.count']);",
+              "    console.log('Groups on this page   :', json.value.length);",
+              "    console.log('');",
+              "    json.value.forEach(function(g, i) {",
+              "        console.log((i+1) + '.', g.displayName, '|', g.id);",
+              "    });",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+
+  ]
+}
